@@ -30,6 +30,7 @@ public sealed class GenericProvider : IDeviceProvider
 
     private static Task ScanUsbAsync(DeviceHub hub)
     {
+        var seen = new HashSet<ManagedDevice>();
         var byProduct = DeviceList.Local.GetHidDevices()
             .Where(d => Vendors.ContainsKey(d.VendorID))
             .GroupBy(d => (d.VendorID, d.ProductID));
@@ -52,9 +53,14 @@ public sealed class GenericProvider : IDeviceProvider
                 _ = dev.ApplySavedAsync();
             }
             dev.IsOnline = true;
+            seen.Add(dev);
             dev.SetConnections(new[] { bt ? "Bluetooth" : "USB" },
                 g.Select(d => $"VID {d.VendorID:X4}  PID {d.ProductID:X4}  {SafeUsage(d)}"));
         }
+        // Unplugged USB devices disappear from the list (their settings stay saved).
+        List<GenericDevice> usb;
+        lock (hub.Devices) usb = hub.Devices.OfType<GenericDevice>().Where(d => d.Key.StartsWith("hid:")).ToList();
+        foreach (var d in usb.Where(d => !seen.Contains(d))) d.IsOnline = false;
         return Task.CompletedTask;
     }
 
@@ -140,6 +146,12 @@ public sealed class GenericProvider : IDeviceProvider
                 var connected = di.Properties.TryGetValue("System.Devices.Aep.IsConnected", out var c) && c is true;
                 var key = $"bt:{addr}";
                 var dev = FindByName(hub, vendor, name) ?? hub.Find<GenericDevice>(key);
+                // Paired but switched off / out of range: don't list it (an existing entry is just hidden).
+                if (!connected)
+                {
+                    if (dev != null && dev.Key.StartsWith("bt:")) dev.IsOnline = false;
+                    continue;
+                }
                 if (dev == null)
                 {
                     dev = new GenericDevice(key, name, vendor, kind);
@@ -151,7 +163,7 @@ public sealed class GenericProvider : IDeviceProvider
                 dev.SetConnections(new[] { "Bluetooth" }, new[] { $"Bluetooth {(isLe ? "LE" : "classic")} {addr}" });
                 dev.BatteryReader = () => ReadBatteryAsync(id, isLe, name);
                 await dev.PollAsync();
-                if (!connected) dev.IsOnline = false;
+                dev.IsOnline = true;
             }
         }
     }

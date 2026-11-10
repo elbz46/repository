@@ -19,6 +19,13 @@ public sealed class AppSettingsPage : ManagedDevice
         Add("General", new ToggleSetting("closetotray", "Closing the window keeps PeriphHub running in the tray",
             SettingsStore.Instance.GetApp("closeToTray", true), v => { SettingsStore.Instance.SetApp("closeToTray", v); return Task.CompletedTask; })
         { Persist = false });
+        Add("General", new ToggleSetting("showoffline", "Show devices that are switched off or unplugged", ShowDisconnected, v =>
+        {
+            SettingsStore.Instance.SetApp("showOffline", v);
+            ShowDisconnectedChanged?.Invoke();
+            return Task.CompletedTask;
+        }) { Persist = false, Description = "Off: only devices that are connected right now are listed. Their settings are kept either way." });
+        BuildPcInfo();
         Add("Backup", new CommandSetting("backup", "Settings backup",
             new CommandItem("Export settings…", ExportAsync),
             new CommandItem("Import settings…", ImportAsync),
@@ -30,6 +37,34 @@ public sealed class AppSettingsPage : ManagedDevice
     }
 
     public override string Glyph => "\uE713";
+
+    public static bool ShowDisconnected => SettingsStore.Instance.GetApp("showOffline", false);
+    public static event Action? ShowDisconnectedChanged;
+
+    private void BuildPcInfo()
+    {
+        static string? W(string cls, string prop) => Drivers.Asus.AsusLaptopDevice.Wmi(cls, prop);
+        var maker = W("Win32_ComputerSystem", "Manufacturer");
+        var model = W("Win32_ComputerSystem", "Model");
+        var cpu = W("Win32_Processor", "Name");
+        var ramBytes = W("Win32_ComputerSystem", "TotalPhysicalMemory");
+        var ram = long.TryParse(ramBytes, out var b) ? $"{Math.Round(b / 1073741824.0)} GB" : "?";
+        var gpus = new List<string>();
+        try
+        {
+            using var s = new System.Management.ManagementObjectSearcher("SELECT Name FROM Win32_VideoController");
+            foreach (var o in s.Get()) if (o["Name"]?.ToString() is { Length: > 0 } n) gpus.Add(n.Trim());
+        }
+        catch { }
+        var os = W("Win32_OperatingSystem", "Caption");
+        var bios = W("Win32_BIOS", "SMBIOSBIOSVersion");
+        Add("This PC (detected automatically)", new InfoSetting("pc.model", "Manufacturer & model", $"{maker} {model}".Trim()));
+        Add("This PC (detected automatically)", new InfoSetting("pc.cpu", "Processor", cpu ?? "?"));
+        Add("This PC (detected automatically)", new InfoSetting("pc.gpu", "Graphics", gpus.Count > 0 ? string.Join("\n", gpus) : "?"));
+        Add("This PC (detected automatically)", new InfoSetting("pc.ram", "Memory", ram));
+        Add("This PC (detected automatically)", new InfoSetting("pc.os", "Windows", os ?? "?"));
+        Add("This PC (detected automatically)", new InfoSetting("pc.bios", "BIOS", bios ?? "?"));
+    }
 
     public static bool IsAutostart()
     {

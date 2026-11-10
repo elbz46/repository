@@ -22,6 +22,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _selected = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Selected)));
             PageScroller?.ScrollToTop();
+            if (EmptyText != null)
+            {
+                EmptyText.Visibility = value == null ? Visibility.Visible : Visibility.Collapsed;
+                PageBody.Visibility = value == null ? Visibility.Collapsed : Visibility.Visible;
+            }
         }
     }
 
@@ -29,10 +34,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         InitializeComponent();
         DataContext = this;
-        Devices.CollectionChanged += (_, _) =>
-        {
-            if (Selected == null && Devices.Count > 0) DeviceList.SelectedIndex = 0;
-        };
+        // Only devices that are connected right now are listed; they appear / disappear by themselves.
+        var view = (System.Windows.Data.ListCollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(Devices);
+        view.Filter = o => AppSettingsPage.ShowDisconnected || o is ManagedDevice { IsOnline: true };
+        view.IsLiveFiltering = true;
+        view.LiveFilteringProperties.Add(nameof(ManagedDevice.IsOnline));
+        AppSettingsPage.ShowDisconnectedChanged += () => Dispatcher.Invoke(view.Refresh);
+        ((System.Collections.Specialized.INotifyCollectionChanged)view).CollectionChanged += (_, _) => EnsureVisibleSelection(view);
+    }
+
+    private void EnsureVisibleSelection(System.Windows.Data.ListCollectionView view)
+    {
+        if (Selected == App.AppPage) return;
+        if (Selected != null && view.Contains(Selected)) return;
+        DeviceList.SelectedIndex = view.Count > 0 ? 0 : -1;
+        if (view.Count == 0) Selected = null;
     }
 
     public void ShowAndActivate()
